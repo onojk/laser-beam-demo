@@ -2,7 +2,7 @@
 
 A real-time-style demoscene video for **"Laser Beam"**, a haunted 1960s psych-pop song:
 minor-key pipe organ, a ghostly barbershop quartet, theremin, music box, church bells and
-tape wobble at about 72 bpm. It's rendered offline and deterministically from GLSL shaders
+tape wobble at 68.8 bpm. It's rendered offline and deterministically from GLSL shaders
 driven by an analysis of the song.
 
 > Work in progress: built in stages (setup → audio analysis → look → scenes → render).
@@ -31,9 +31,23 @@ python3 -m venv .venv
 
 # 2. section map -> cache/sections.json, prints the timestamps
 .venv/bin/python sections.py
+
+# 3. render: a 10 s look test at 1080p with the song muxed in
+.venv/bin/python render.py renders/looktest.mp4 --audio "/path/to/Laser Beam.wav" \
+    --start 38 --dur 10 --scene looktest --still 42.3
 ```
 
 Analysis uses ffmpeg and numpy only and takes about a second.
+
+## The look
+
+Each scene shader writes three emission channels, not colours: sickly green phosphor, violet
+glow and bone white. A shared post pass turns them into the haunted phosphor palette over a
+near-black ground. It also adds bloom, CRT scanlines (540 per frame at any resolution), a
+vignette and film grain. The tape-wobble warp follows the wobble measured in the song's
+pitch. On big on-beat onsets the frame flashes bone-white, at most once every 1.5 s.
+Rendering is deterministic: time is `frame / 30`, and the grain comes from a fixed seed.
+The same command gives byte-identical frames every time.
 
 ## License
 
