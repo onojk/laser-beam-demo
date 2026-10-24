@@ -5,6 +5,11 @@ previous 0.2 s, the top BONE_PCT of each section), but here they also have to si
 and they flash bone-white rather than inverting: "occasional", so never closer than
 BONE_GAP seconds apart (well under the 3 per second photosensitivity cap). Quiet sections
 (the intro, the breakdown) and everything after the music ends get no bone flashes.
+
+Strong onsets (KICK_MIN and up) lift the glow, at most one per KICK_GAP (under 3 per second),
+except in the breakdown. Tunnel speed and theremin-plasma speed are integrated (travel,
+htravel) so they follow the music without ever jumping. The outro's collapse, tape stop and
+final snap are timed here too.
 """
 import json, os
 import numpy as np
@@ -19,7 +24,11 @@ KICK_MIN = 0.55                  # onset strength (0..1 among onsets) that flash
 KICK_GAP = 0.34                  # s between kick flashes, at least: under 3 per second
 TRAVEL = (0.35, 2.2)             # tunnel speed = a + b * rms (smoothed 0.25 s), depth units / s
 NO_SCROLLER = {"breakdown", "outro"}
-MAX_ONS = 32                     # onset times passed to a shader per section
+MAX_ONS = 64                     # onset times passed to a shader per section
+HIGHTIME = (0.3, 1.7)            # theremin plasma speed = a + b * high, so it never jumps
+QUIET = {"breakdown"}            # stripped down: no kick lift either, let the whisper breathe
+COLLAPSE = 19.6                  # s from the outro's start until everything is one laser line
+SNAP = 0.1                       # s: the line shrinks to a dot before the music's end, then black
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "cache")
 
@@ -67,6 +76,9 @@ class Sync:
         n = int(0.25 * self.ffps)
         sm = np.convolve(np.pad(self.rms, (n // 2, n - n // 2 - 1), mode="edge"), np.ones(n) / n, "valid")
         self.travel = np.r_[0, np.cumsum(TRAVEL[0] + TRAVEL[1] * sm)[:-1]] / self.ffps
+        sm = np.convolve(np.pad(self.high, (n // 2, n - n // 2 - 1), mode="edge"), np.ones(n) / n, "valid")
+        self.htravel = np.r_[0, np.cumsum(HIGHTIME[0] + HIGHTIME[1] * sm)[:-1]] / self.ffps
+        self.tape_from = self.outro.get("tape_stop_from", self.music_end)
 
     def at(self, arr, t):
         """arr (at the features' frame rate) at time t, linearly interpolated."""
@@ -94,13 +106,26 @@ class Sync:
         return i + (t - b[i]) / (nxt - b[i]), float(t - b[i])
 
     def section_onsets(self, s):
-        """This section's onset times relative to its start (at most MAX_ONS)."""
+        """This section's onset times relative to its start, and their strengths (at most
+        MAX_ONS of each)."""
         m = (self.onset_t >= s["start"]) & (self.onset_t < s["end"])
-        return (self.onset_t[m] - s["start"])[:MAX_ONS].astype("f4")
+        t = self.onset_t[m][:MAX_ONS]
+        st = np.array([self.at(self.onset_strength, x) for x in t], "f4")
+        return (t - s["start"]).astype("f4"), st
+
+    def outro_timing(self, t):
+        """collapse 0..1 (eased in), tape-stop progress 0..1 and its phase (the integral of a
+        speed falling as (1 - x)^2, in seconds of tape), and the snap 0..1 before the end."""
+        c = min(1.0, max(0.0, (t - self.outro["start"]) / COLLAPSE))
+        D = self.music_end - self.tape_from
+        x = min(1.0, max(0.0, (t - self.tape_from) / D))
+        phase = D * (x - x * x + x ** 3 / 3)
+        snap = min(1.0, max(0.0, (t - (self.music_end - SNAP)) / SNAP))
+        return {"collapse": c * c * (3 - 2 * c), "tape": x, "tape_phase": phase, "snap": snap}
 
     def uniforms(self, t):
         s = self.section(t)
-        ons = self.section_onsets(s)
+        ons, ons_s = self.section_onsets(s)
         ki = np.searchsorted(self.kick_t, t, side="right") - 1
         beat, since_beat = self.beat(t)
         so = self.since(self.onset_t, t)
@@ -115,12 +140,16 @@ class Sync:
                 "bone": float(np.exp(-self.since(self.bone_t, t) / 0.10)),
                 "wob": float(np.clip(self.at(self.wobble_cents, t) / WOBBLE_FULL, -1, 1)),
                 "beat": beat, "since_beat": since_beat,
-                "kick": 0.0 if ki < 0 else self.kick_s[ki] * float(np.exp(-(t - self.kick_t[ki]) / 0.12)),
-                "travel": self.at(self.travel, t), "ons": ons, "n_ons": len(ons),
+                "kick": 0.0 if ki < 0 or s["name"] in QUIET
+                        else self.kick_s[ki] * float(np.exp(-(t - self.kick_t[ki]) / 0.12)),
+                "travel": self.at(self.travel, t), "htravel": self.at(self.htravel, t),
+                "ons": ons, "ons_s": ons_s, "n_ons": len(ons),
+                "stripped": 1.0 if s["name"] in QUIET else 0.0,
                 "since_bone": self.since(self.bone_t, t),
                 "bone_n": int(np.searchsorted(self.bone_t, t, side="right")),
                 "finale": 1.0 if s["name"] == "final_chorus" else 0.0,
-                "scroller": 0.0 if s["name"] in NO_SCROLLER else 1.0}
+                "scroller": 0.0 if s["name"] in NO_SCROLLER else 1.0,
+                **self.outro_timing(t)}
 
 if __name__ == "__main__":
     s = Sync()

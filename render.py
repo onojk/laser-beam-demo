@@ -19,7 +19,7 @@ Frames go to ffmpeg as raw rgb24. Render loop, uniform plumbing and muxing are a
 import argparse, os, subprocess, sys, tempfile
 import numpy as np
 import moderngl
-from sync import Sync, FPS
+from sync import Sync, FPS, COLLAPSE
 import logo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,8 +51,13 @@ uniform float travel;                 // integral of rms-driven speed: a positio
 uniform float since_bone;             // seconds since the last bone flash (1e3 before any)
 uniform int bone_n;                   // bone flashes so far: seeds whatever each one triggers
 uniform float finale;                 // 1 in the final chorus
-uniform float ons[32];                // this section's onset times, from its start
+uniform float ons[64];                // this section's onset times, from its start
+uniform float ons_s[64];              // and their strengths, 0..1 among all onsets
 uniform int n_ons;
+uniform float htravel;                // integral of high-band-driven speed (theremin plasma)
+uniform float stripped;               // 1 in the breakdown: almost dark
+uniform float collapse, tape, tape_phase, snap;   // outro timing (see sync.outro_timing)
+uniform sampler2D src;                // the outro's source scene, rendered first
 uniform int seed;
 float since_onset(float s) { float r = 1e3; for (int i = 0; i < n_ons; i++) { if (ons[i] <= s) r = s - ons[i]; else break; } return r; }
 vec2 P() { return (uv * res - 0.5 * res) / (0.5 * res.y); }
@@ -180,6 +185,7 @@ class Renderer:
             tx.repeat_x = tx.repeat_y = False
             return tx, self.ctx.framebuffer([tx])
         self.scene, self.scene_fbo = target(W, H)
+        self.src, self.src_fbo = target(W, H)                   # the outro's source scene
         self.bw, self.bh = W // 4, H // 4
         self.b1, self.b1_fbo = target(self.bw, self.bh)
         self.b2, self.b2_fbo = target(self.bw, self.bh)
@@ -219,10 +225,17 @@ class Renderer:
                 tx.use(unit); prog[k].value = unit
                 if k + "_size" in prog:
                     prog[k + "_size"].value = tx.size
-    def frame(self, name, u, frame_no, gain=1.0):
+        if "src" in prog:
+            self.src.use(7); prog["src"].value = 7
+    def draw_scene(self, name, u, fbo):
         prog, vao = self.scene_prog(name)
         self.bind(prog, u)
-        self.scene_fbo.use(); vao.render(moderngl.TRIANGLE_STRIP)
+        fbo.use(); vao.render(moderngl.TRIANGLE_STRIP)
+    def frame(self, name, u, frame_no, gain=1.0, source=None):
+        """source: (scene name, uniforms) drawn first into the src texture, for the outro."""
+        if source:
+            self.draw_scene(*source, self.src_fbo)
+        self.draw_scene(name, u, self.scene_fbo)
         # scroller, added on top of the scene's emission
         if u.get("scroller", 0) > 0.5 and "scroll_txt" in self.tex:
             prog, vao = self.scroller
@@ -301,6 +314,17 @@ def scroll_strip(text, size=44, h=56):
     out[:, :cols[-1] - cols[0] + 1] = strip[:, cols[0]:cols[-1] + 1]
     return out
 
+# the archive's catalogue cards (bridge), lines from the song
+ARCHIVE = ["WRITE IT DOWN", "GOLD OR JUST SAND", "SOMEBODY'S GONNA FIND IT",
+           "THE MACHINE IS LISTENING", "IF NO ONE READS IT", "SEND IT OUT", "DO THE WORK",
+           "IT STILL COUNTS", "FOLLOWING THE LIGHT", "LASER BEAM"]
+
+# what the outro collapses, in turn: (scene, section it is replayed from, seconds into it)
+OUTRO_SOURCES = [("tunnel", "verse2", 6.0), ("organ", "final_chorus", 4.0), ("bells", "bridge", 6.0)]
+# uniforms that follow the song now, whatever scene is replayed
+MUSIC = ("rms", "low", "mid", "high", "phrase", "flash", "bone", "kick", "wob", "beat",
+         "since_beat", "since_bone", "bone_n")
+
 class Film:
     def __init__(self, W, H, scene=None):
         self.sync = Sync()
@@ -309,15 +333,40 @@ class Film:
         strip = scroll_strip(SCROLL_TEXT)
         print(f"scroller strip {strip.shape[1]}x{strip.shape[0]} px, {len(SCROLL_TEXT)} chars, "
               f"one loop {strip.shape[1] / strip.shape[0] * 0.055 / 0.30:.1f} s", file=sys.stderr)
-        self.r = Renderer(W, H, {"title": title, "scroll_txt": strip})
+        archive = np.vstack([text_image([line], 44, 720, 72) for line in ARCHIVE])   # 10:1 cells
+        print(f"archive atlas {archive.shape[1]}x{archive.shape[0]} px, {len(ARCHIVE)} cards",
+              file=sys.stderr)
+        self.r = Renderer(W, H, {"title": title, "scroll_txt": strip, "archive": archive})
         segs, cum, total = logo.segments(width=1.7, centre=(0.0, -0.05))
-        self.consts = {"segs": segs, "cum": cum, "n_segs": len(segs), "pen_len": total}
+        self.consts = {"segs": segs, "cum": cum, "n_segs": len(segs), "pen_len": total,
+                       "n_cards": len(ARCHIVE)}
+        self.by_name = {s["name"]: s for s in self.sync.sections}
+
+    def outro_source(self, t, u):
+        """The scene the outro is collapsing at time t: replayed from its own section, with
+        the song's current music uniforms."""
+        o = self.sync.outro
+        slot = COLLAPSE / len(OUTRO_SOURCES)
+        i = min(len(OUTRO_SOURCES) - 1, int((t - o["start"]) // slot))
+        name, sec, at = OUTRO_SOURCES[i]
+        ts = self.by_name[sec]["start"] + at + (t - o["start"] - i * slot)
+        us = dict(self.sync.uniforms(ts), **self.consts)
+        us.update({k: u[k] for k in MUSIC})
+        return name, us
 
     def frame(self, fi):
         t = fi / FPS
         s = self.sync.section(t)
         name = self.scene or s["scene"]
-        return self.r.frame(name, dict(self.sync.uniforms(t), **self.consts), fi)
+        u = dict(self.sync.uniforms(t), **self.consts)
+        source = None
+        if name == "collapse":
+            if u["collapse"] < 1.0:
+                source = self.outro_source(t, u)
+            # the tape stop drags the picture's wobble too
+            u["wob"] = float(np.clip(u["wob"] + 0.7 * u["tape"] * np.sin(u["tape_phase"] * 5.0), -1, 1))
+        gain = 0.0 if t >= self.sync.music_end else 1.0
+        return self.r.frame(name, u, fi, gain, source)
 
 def main():
     ap = argparse.ArgumentParser()
