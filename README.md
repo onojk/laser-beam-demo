@@ -42,6 +42,10 @@ python3 -m venv .venv
 # 3. render the whole film at 1080p (preview, CRF 22) with the song muxed in
 .venv/bin/python render.py renders/laser_beam_1080p.mp4 --audio "/path/to/Laser Beam.wav" --full
 
+# the 4K master: 3840x2160, CRF 16, full grain (about 9.5 GB, about 32 min on a laptop iGPU)
+.venv/bin/python render.py renders/laser_beam_2160p.mp4 --audio "/path/to/Laser Beam.wav" \
+    --full --res 2160 --crf 16
+
 # ...or any stretch of it, a single scene, or stills
 .venv/bin/python render.py renders/clip.mp4 --audio "/path/to/Laser Beam.wav" --start 40 --dur 26
 .venv/bin/python render.py - --still 47 --still 215          # PNGs into renders/
