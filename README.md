@@ -56,8 +56,9 @@ Each section of the song gets its own effect. Cuts between sections are hard, on
 | Section | Effect |
 |---|---|
 | intro | A music-box cylinder made of dots. The bright pins are the intro's real onsets, placed so each one plucks its comb tine exactly when the note sounds. Then "LASER BEAM" is drawn in as a glowing vector logo by a moving pen. |
-| verses | A candlelit brick tunnel (the classic angle / 1-over-r tunnel). Mortar is a phosphor grid, candles flicker in niches, and sheet ghosts drift toward the camera. Speed follows the song's loudness. |
-| *(in progress)* | organ-pipe copper bars with a ghost quartet, church-bell rings and the listening archive, theremin plasma, collapse to a laser line |
+| verses | A candlelit brick tunnel (the classic angle / 1-over-r tunnel). Mortar is a phosphor grid, candles flicker in niches, and sheet ghosts drift toward the camera. Speed follows the song's loudness. On each bone-white flash one ghost swoops past close to the camera. |
+| choruses | An organ-pipe façade lit by copper bars (the classic raster effect) that swell with the bass, each pipe speaking from its mouth on the beat. In front, the barbershop quartet: four glowing ghost heads in boater hats (bass, baritone, lead, tenor). Each lights up and sings with its band, and they sway together on the beat. In the final chorus all four burn at once. |
+| *(in progress)* | church-bell rings and the listening archive, theremin plasma, collapse to a laser line |
 
 Throughout, a classic sine scroller carries the greetings along the bottom. It goes dark for
 the breakdown and the outro. Strong onsets lift the glow (never more than 3 a second), and the

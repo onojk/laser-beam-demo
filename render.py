@@ -48,6 +48,9 @@ uniform float wob;                    // -1..1 tape wobble
 uniform float beat, since_beat;       // beats elapsed (float); seconds since the last beat
 uniform float kick;                   // strong-onset pulse (spaced under 3 per second)
 uniform float travel;                 // integral of rms-driven speed: a position, never jumps
+uniform float since_bone;             // seconds since the last bone flash (1e3 before any)
+uniform int bone_n;                   // bone flashes so far: seeds whatever each one triggers
+uniform float finale;                 // 1 in the final chorus
 uniform float ons[32];                // this section's onset times, from its start
 uniform int n_ons;
 uniform int seed;
@@ -73,7 +76,7 @@ uniform sampler2D scroll_txt;
 uniform vec2 scroll_txt_size;
 uniform float scroller;               // 1 shown, 0 hidden (breakdown, outro)
 const float SPEED = 0.30;             // screen heights per second
-const float BAND = 0.072;             // glyph band height, in screen heights
+const float BAND = 0.055;             // glyph band height, in screen heights
 void main() {
     if (scroller < 0.5) discard;
     float aspect = res.x / res.y;
@@ -82,11 +85,11 @@ void main() {
     float xt = xs + SPEED * t - aspect;
     if (xt < 0.0) discard;
     float px = xt * scroll_txt_size.y / BAND;
-    float y0 = 0.115 + 0.038 * sin(xs * 3.4 - t * 2.1) + 0.010 * sin(xs * 9.0 + t * 3.3);
+    float y0 = 0.105 + 0.030 * sin(xs * 3.4 - t * 2.1) + 0.008 * sin(xs * 9.0 + t * 3.3);
     float v = (uv.y - y0) / BAND + 0.5;
     if (v < 0.0 || v > 1.0) discard;
     float g = texture(scroll_txt, vec2(mod(px, scroll_txt_size.x) / scroll_txt_size.x, v)).r;
-    frag = vec4(g * (0.95 + 0.3 * kick), 0.0, g * 0.15 * bone, 1.0);
+    frag = vec4(g * (0.72 + 0.2 * kick), 0.0, g * 0.10 * bone, 1.0);
 }
 """
 
@@ -305,7 +308,7 @@ class Film:
         title = text_image(["LASER BEAM"], 220, 1600, 300, font=FONT_TITLE)
         strip = scroll_strip(SCROLL_TEXT)
         print(f"scroller strip {strip.shape[1]}x{strip.shape[0]} px, {len(SCROLL_TEXT)} chars, "
-              f"one loop {strip.shape[1] / strip.shape[0] * 0.072 / 0.30:.1f} s", file=sys.stderr)
+              f"one loop {strip.shape[1] / strip.shape[0] * 0.055 / 0.30:.1f} s", file=sys.stderr)
         self.r = Renderer(W, H, {"title": title, "scroll_txt": strip})
         segs, cum, total = logo.segments(width=1.7, centre=(0.0, -0.05))
         self.consts = {"segs": segs, "cum": cum, "n_segs": len(segs), "pen_len": total}

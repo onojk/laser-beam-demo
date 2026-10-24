@@ -117,6 +117,9 @@ class Sync:
                 "beat": beat, "since_beat": since_beat,
                 "kick": 0.0 if ki < 0 else self.kick_s[ki] * float(np.exp(-(t - self.kick_t[ki]) / 0.12)),
                 "travel": self.at(self.travel, t), "ons": ons, "n_ons": len(ons),
+                "since_bone": self.since(self.bone_t, t),
+                "bone_n": int(np.searchsorted(self.bone_t, t, side="right")),
+                "finale": 1.0 if s["name"] == "final_chorus" else 0.0,
                 "scroller": 0.0 if s["name"] in NO_SCROLLER else 1.0}
 
 if __name__ == "__main__":

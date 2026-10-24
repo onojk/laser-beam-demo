@@ -1,6 +1,7 @@
 // Verses: a dark candlelit tunnel (the classic demoscene tunnel: angle and 1/r as texture
 // coordinates) of stone bricks with candles in niches, and sheet ghosts drifting toward us.
 // Speed follows rms: depth is `travel`, the running integral of an rms-driven speed.
+// On each bone flash one ghost swoops past close to the camera.
 const float K = 0.30;             // tunnel radius on screen at depth 1
 const float NU = 24.0;            // bricks around
 const float BRICK = 0.12;         // brick length along the tunnel, depth units
@@ -17,6 +18,26 @@ vec2 candle(vec2 id, vec2 f) {
     float flame = exp(-dot(d, d) / 0.003) * flick;
     float pool = exp(-dot(f - 0.5, f - 0.5) / 0.35) * flick;
     return vec2(flame, pool);
+}
+
+// a sheet ghost of size s at pos, tilted sw; returns (emission, rim)
+vec2 ghost(vec2 p, vec2 pos, float s, float sw, float fk) {
+    vec2 g = (p - pos) / s;
+    g = mat2(cos(sw), -sin(sw), sin(sw), cos(sw)) * g;
+    float wave = 0.09 * sin(g.x * 11.0 + t * 4.0 + fk);
+    float head = length(g - vec2(0.0, 0.3)) - 0.5;
+    float body = max(abs(g.x) - 0.5, max(g.y - 0.3, (-0.85 + wave) - g.y));
+    float d = min(head, body);
+    float eyes = min(length(g - vec2(-0.18, 0.38)), length(g - vec2(0.18, 0.38))) - 0.085;
+    float mouth = length((g - vec2(0.0, 0.12)) * vec2(1.6, 1.0)) - 0.08;
+    float holes = min(eyes, mouth);
+    float wisp = fbm(g * 2.5 + vec2(0.0, t * 0.6) + fk);
+    // the hem dissolves: below the waist the sheet fades into tattered wisps
+    float hem = smoothstep(-0.9, -0.1, g.y + 0.35 * (wisp - 0.5));
+    float inside = (1.0 - smoothstep(-0.06, 0.06, d)) * hem;
+    float rim = exp(-d * d / 0.006) * hem;
+    float hollow = 1.0 - smoothstep(-0.01, 0.03, holes);
+    return vec2((inside * (0.12 + 0.30 * wisp) + rim * 0.28) * (1.0 - hollow), rim);
 }
 
 void main() {
@@ -71,25 +92,26 @@ void main() {
         float rho = 0.55 + 0.30 * rnd(fk + 41.0);
         vec2 pos = c + K * rho / zg * vec2(cos(th), sin(th));
         float s = K * 0.32 / zg;
-        vec2 g = (p - pos) / s;
-        float sw = 0.25 * sin(t * 0.7 + fk * 2.0);
-        g = mat2(cos(sw), -sin(sw), sin(sw), cos(sw)) * g;
-        float wave = 0.09 * sin(g.x * 11.0 + t * 4.0 + fk);
-        float head = length(g - vec2(0.0, 0.3)) - 0.5;
-        float body = max(abs(g.x) - 0.5, max(g.y - 0.3, (-0.85 + wave) - g.y));
-        float d = min(head, body);
-        float eyes = min(length(g - vec2(-0.18, 0.38)), length(g - vec2(0.18, 0.38))) - 0.085;
-        float mouth = length((g - vec2(0.0, 0.12)) * vec2(1.6, 1.0)) - 0.08;
-        float holes = min(eyes, mouth);
-        float wisp = fbm(g * 2.5 + vec2(0.0, t * 0.6) + fk);
-        // the hem dissolves: below the waist the sheet fades into tattered wisps
-        float hem = smoothstep(-0.9, -0.1, g.y + 0.35 * (wisp - 0.5));
-        float inside = (1.0 - smoothstep(-0.06, 0.06, d)) * hem;
-        float rim = exp(-d * d / 0.006) * hem;
-        float hollow = 1.0 - smoothstep(-0.01, 0.03, holes);
-        float ghost = (inside * (0.12 + 0.30 * wisp) + rim * 0.28) * (1.0 - hollow);
+        vec2 gr = ghost(p, pos, s, 0.25 * sin(t * 0.7 + fk * 2.0), fk);
+        float ghost = gr.x, rim = gr.y;
         e.g += ghost * vis * (0.8 + 0.4 * mid);
         e.r += rim * vis * 0.03;
+    }
+
+    // on each bone flash one ghost swoops past close to the camera, large and translucent,
+    // from a side seeded by the flash's index
+    const float SWOOP = 1.5;
+    if (since_bone < SWOOP) {
+        float k = float(bone_n);
+        float d = since_bone / SWOOP;
+        float th = rnd(k * 3.0 + 101.0) * 6.2831853;
+        // in screen terms: grows from small to bigger than the frame while sliding outward
+        float size = mix(0.15, 1.7, d * d);
+        vec2 pos = c + mix(0.15, 1.3, d * d) * vec2(cos(th), sin(th));
+        vec2 gr = ghost(p, pos, size, 0.6 * (rnd(k + 7.0) - 0.5) + 0.8 * d * sign(cos(th)), k);
+        float vis = smoothstep(0.0, 0.15, d) * (1.0 - smoothstep(0.65, 1.0, d)) * 0.6;
+        e.g += gr.x * vis;
+        e.b += gr.y * vis * 0.25;
     }
     frag = vec4(e, 1.0);
 }
