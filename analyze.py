@@ -167,7 +167,10 @@ def main():
     for i in range(1, n - 1):
         if flux[i] > thr[i] and flux[i] >= flux[i - 1] and flux[i] > flux[i + 1] and i - last > 2:
             onset[i] = 1.0; last = i
-    strength = np.where(onset > 0, norm(flux - med), 0)
+    # strength: flux over its local median, normalised among the onsets themselves (over all
+    # frames nearly every onset would saturate at 1)
+    strength = np.zeros(n, np.float32)
+    strength[onset > 0] = norm((flux - med)[onset > 0], 5, 95)
 
     env = np.maximum(flux - boxcar(flux, 1.0), 0)
     bpm, cands = tempo(env)

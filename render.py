@@ -20,6 +20,7 @@ import argparse, os, subprocess, sys, tempfile
 import numpy as np
 import moderngl
 from sync import Sync, FPS
+import logo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
@@ -45,7 +46,12 @@ uniform float phrase;                 // ~4 s spectral centroid
 uniform float flash, bone;            // decaying onset pulse; bone-white big-beat pulse
 uniform float wob;                    // -1..1 tape wobble
 uniform float beat, since_beat;       // beats elapsed (float); seconds since the last beat
+uniform float kick;                   // strong-onset pulse (spaced under 3 per second)
+uniform float travel;                 // integral of rms-driven speed: a position, never jumps
+uniform float ons[32];                // this section's onset times, from its start
+uniform int n_ons;
 uniform int seed;
+float since_onset(float s) { float r = 1e3; for (int i = 0; i < n_ons; i++) { if (ons[i] <= s) r = s - ons[i]; else break; } return r; }
 vec2 P() { return (uv * res - 0.5 * res) / (0.5 * res.y); }
 uint hash(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
 float rnd(float n) { return float(hash(uint(int(n)) ^ uint(seed))) / 4294967295.0; }
@@ -58,6 +64,30 @@ float vnoise(vec2 p) {
 float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + 17.1; a *= 0.5; } return s; }
 // glow of a distance d (in P units): a sharp core plus a soft halo
 float glow(float d, float w) { return exp(-d * d / (w * w)) + 0.15 * w / (abs(d) + w); }
+"""
+
+# The greetings scroller, drawn additively over every scene before the bloom so it glows
+# like the rest: a classic sine scroller, each column riding its own phase of the wave.
+SCROLLER = """
+uniform sampler2D scroll_txt;
+uniform vec2 scroll_txt_size;
+uniform float scroller;               // 1 shown, 0 hidden (breakdown, outro)
+const float SPEED = 0.30;             // screen heights per second
+const float BAND = 0.072;             // glyph band height, in screen heights
+void main() {
+    if (scroller < 0.5) discard;
+    float aspect = res.x / res.y;
+    float xs = uv.x * aspect;
+    // text position: enters at the right edge at t = 0, loops forever after
+    float xt = xs + SPEED * t - aspect;
+    if (xt < 0.0) discard;
+    float px = xt * scroll_txt_size.y / BAND;
+    float y0 = 0.115 + 0.038 * sin(xs * 3.4 - t * 2.1) + 0.010 * sin(xs * 9.0 + t * 3.3);
+    float v = (uv.y - y0) / BAND + 0.5;
+    if (v < 0.0 || v > 1.0) discard;
+    float g = texture(scroll_txt, vec2(mod(px, scroll_txt_size.x) / scroll_txt_size.x, v)).r;
+    frag = vec4(g * (0.95 + 0.3 * kick), 0.0, g * 0.15 * bone, 1.0);
+}
 """
 
 DOWN = """
@@ -91,7 +121,7 @@ in vec2 uv;
 out vec4 frag;
 uniform sampler2D scene, bloom;
 uniform vec2 res;
-uniform float t, wob, bone, gain;
+uniform float t, wob, bone, kick, gain;
 uniform int frame, seed;
 const vec3 GROUND = vec3(0.010, 0.014, 0.012);      // near-black, a breath of green
 const vec3 GREEN  = vec3(0.50, 1.00, 0.28);         // sickly phosphor green
@@ -109,9 +139,9 @@ void main() {
     // song's measured pitch wobble; the sway's chroma split widens with it
     float w = wob;
     vec2 q = uv;
-    q.x += w * (0.0035 + 0.0025 * sin(q.y * 5.0 + t * 1.7));
-    q.y += w * 0.0015 * sin(t * 2.3);
-    float split = 0.0008 + 0.0018 * abs(w);
+    q.x += w * (0.0070 + 0.0050 * sin(q.y * 5.0 + t * 1.7));
+    q.y += w * 0.0030 * sin(t * 2.3);
+    float split = 0.0008 + 0.0036 * abs(w);
     vec3 e;
     e.r = texture(scene, q + vec2(split, 0.0)).r;
     e.g = texture(scene, q - vec2(split, 0.0)).g;
@@ -120,6 +150,8 @@ void main() {
     vec3 c = palette(e) + 0.9 * palette(b);
     // bone flash: lift the whole frame toward bone white for a few frames on big beats
     c += BONE * bone * (0.10 + 1.2 * dot(e, vec3(0.33)));
+    // kick: strong onsets lift the glow briefly, in green
+    c += GREEN * kick * (0.04 + 0.5 * dot(e, vec3(0.33)));
     // tone map (soft knee keeps the glow from clipping into flat colour), then the ground
     c = 1.0 - exp(-c * 1.15);
     c = GROUND + c * (1.0 - GROUND);
@@ -151,6 +183,7 @@ class Renderer:
         self.out = self.ctx.renderbuffer((W, H), 3)
         self.out_fbo = self.ctx.framebuffer([self.out])
         self.down, self.blur, self.post = (self.program(s) for s in (DOWN, BLUR, POST))
+        self.scroller = self.program(HEAD + SCROLLER)
         self.scenes = {}
         self.tex = {}
         for name, img in (textures or {}).items():             # 8-bit gray, top row first
@@ -176,15 +209,25 @@ class Renderer:
                     prog[k].write(buf.tobytes())
                 else:
                     prog[k].value = v
-    def frame(self, name, u, frame_no, gain=1.0):
-        prog, vao = self.scene_prog(name)
+    def bind(self, prog, u):
         self.set(prog, dict(u, res=(self.W, self.H), seed=SEED))
         for unit, (k, tx) in enumerate(self.tex.items(), start=1):
             if k in prog:
                 tx.use(unit); prog[k].value = unit
                 if k + "_size" in prog:
                     prog[k + "_size"].value = tx.size
+    def frame(self, name, u, frame_no, gain=1.0):
+        prog, vao = self.scene_prog(name)
+        self.bind(prog, u)
         self.scene_fbo.use(); vao.render(moderngl.TRIANGLE_STRIP)
+        # scroller, added on top of the scene's emission
+        if u.get("scroller", 0) > 0.5 and "scroll_txt" in self.tex:
+            prog, vao = self.scroller
+            self.bind(prog, u)
+            self.ctx.enable(moderngl.BLEND)
+            self.ctx.blend_func = moderngl.ONE, moderngl.ONE
+            vao.render(moderngl.TRIANGLE_STRIP)
+            self.ctx.disable(moderngl.BLEND)
         # bloom
         p, v = self.down
         self.scene.use(0); p["src"].value = 0
@@ -201,7 +244,7 @@ class Renderer:
         self.scene.use(0); self.b1.use(1)
         p["scene"].value, p["bloom"].value = 0, 1
         self.set(p, {"res": (self.W, self.H), "t": u["t"], "wob": u["wob"], "bone": u["bone"],
-                     "gain": gain, "frame": frame_no, "seed": SEED})
+                     "kick": u.get("kick", 0.0), "gain": gain, "frame": frame_no, "seed": SEED})
         self.out_fbo.use(); v.render(moderngl.TRIANGLE_STRIP)
         return self.out_fbo.read(components=3)                 # bottom row first
 
@@ -239,18 +282,39 @@ def save_png(buf, W, H, path):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                     "-s", f"{W}x{H}", "-i", "-", "-vf", "vflip", path], input=buf, check=True)
 
+SCROLL_TEXT = ("LASER BEAM ... DO THE WORK, WRITE IT DOWN, SEND IT OUT INTO THE WORLD SOMEHOW ... "
+               "GOLD OR JUST SAND, IT STILL COUNTS ... GREETINGS TO EVERYONE STAYING UP ALL NIGHT "
+               "FOLLOWING THE LIGHT ... AND TO THE MACHINE THAT IS LISTENING ... "
+               "CODE: GITHUB.COM/ONOJK/LASER-BEAM-DEMO ... ONOJK123.COM ... RSACRACK.COM ... "
+               "JONATHANKENDALLART.COM ... SOMEBODY'S GONNA FIND IT ...          ")
+
+def scroll_strip(text, size=44, h=56):
+    """The scroller text as one strip, trimmed so the loop seam is exactly the trailing gap."""
+    w = int(0.62 * size * len(text)) + 64
+    strip = text_image([text.strip()], size, w, h)
+    cols = np.nonzero(strip.max(axis=0) > 0)[0]
+    gap = int(0.602 * size * (len(text) - len(text.rstrip())))     # mono advance per space
+    out = np.zeros((h, cols[-1] - cols[0] + 1 + gap), np.uint8)
+    out[:, :cols[-1] - cols[0] + 1] = strip[:, cols[0]:cols[-1] + 1]
+    return out
+
 class Film:
     def __init__(self, W, H, scene=None):
         self.sync = Sync()
         self.scene = scene
         title = text_image(["LASER BEAM"], 220, 1600, 300, font=FONT_TITLE)
-        self.r = Renderer(W, H, {"title": title})
+        strip = scroll_strip(SCROLL_TEXT)
+        print(f"scroller strip {strip.shape[1]}x{strip.shape[0]} px, {len(SCROLL_TEXT)} chars, "
+              f"one loop {strip.shape[1] / strip.shape[0] * 0.072 / 0.30:.1f} s", file=sys.stderr)
+        self.r = Renderer(W, H, {"title": title, "scroll_txt": strip})
+        segs, cum, total = logo.segments(width=1.7, centre=(0.0, -0.05))
+        self.consts = {"segs": segs, "cum": cum, "n_segs": len(segs), "pen_len": total}
 
     def frame(self, fi):
         t = fi / FPS
         s = self.sync.section(t)
         name = self.scene or s["scene"]
-        return self.r.frame(name, self.sync.uniforms(t), fi)
+        return self.r.frame(name, dict(self.sync.uniforms(t), **self.consts), fi)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -261,7 +325,7 @@ def main():
     ap.add_argument("--full", action="store_true", help="the whole film: 0 to the song's end")
     ap.add_argument("--res", type=int, default=1080, choices=(540, 1080, 2160))
     ap.add_argument("--scene", default=None, help="force one scene (else the section map)")
-    ap.add_argument("--crf", type=int, default=16)
+    ap.add_argument("--crf", type=int, default=22, help="22 for previews; 16 for the 4K master")
     ap.add_argument("--preset", default="medium")
     ap.add_argument("--still", action="append", type=float, default=[],
                     help="also save the frame at this time as PNG (repeatable)")

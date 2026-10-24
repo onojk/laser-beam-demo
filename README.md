@@ -49,6 +49,20 @@ pitch. On big on-beat onsets the frame flashes bone-white, at most once every 1.
 Rendering is deterministic: time is `frame / 30`, and the grain comes from a fixed seed.
 The same command gives byte-identical frames every time.
 
+## Effects
+
+Each section of the song gets its own effect. Cuts between sections are hard, on the beat.
+
+| Section | Effect |
+|---|---|
+| intro | A music-box cylinder made of dots. The bright pins are the intro's real onsets, placed so each one plucks its comb tine exactly when the note sounds. Then "LASER BEAM" is drawn in as a glowing vector logo by a moving pen. |
+| verses | A candlelit brick tunnel (the classic angle / 1-over-r tunnel). Mortar is a phosphor grid, candles flicker in niches, and sheet ghosts drift toward the camera. Speed follows the song's loudness. |
+| *(in progress)* | organ-pipe copper bars with a ghost quartet, church-bell rings and the listening archive, theremin plasma, collapse to a laser line |
+
+Throughout, a classic sine scroller carries the greetings along the bottom. It goes dark for
+the breakdown and the outro. Strong onsets lift the glow (never more than 3 a second), and the
+biggest on-beat ones flash bone-white.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). This covers the code only. The song belongs to its author.

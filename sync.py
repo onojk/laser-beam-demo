@@ -15,6 +15,11 @@ BONE_GAP = 1.5                   # s between bone flashes, at least
 BONE_ON_BEAT = 0.12              # s; an onset this close to a tracked beat counts as on it
 NO_BONE = {"intro", "breakdown"}
 WOBBLE_FULL = 40.0               # cents of tape wobble that count as full warp
+KICK_MIN = 0.55                  # onset strength (0..1 among onsets) that flashes the frame
+KICK_GAP = 0.34                  # s between kick flashes, at least: under 3 per second
+TRAVEL = (0.35, 2.2)             # tunnel speed = a + b * rms (smoothed 0.25 s), depth units / s
+NO_SCROLLER = {"breakdown", "outro"}
+MAX_ONS = 32                     # onset times passed to a shader per section
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "cache")
 
@@ -50,6 +55,19 @@ class Sync:
                 self.bone_t.append(t); last = t
         self.bone_t = np.array(self.bone_t)
 
+        # kick flashes: strong onsets anywhere the music plays, spaced under 3 per second
+        st = self.onset_strength[idx]
+        self.kick_t, self.kick_s, last = [], [], -1e9
+        for t, v in zip(self.onset_t, st):
+            if v >= KICK_MIN and t - last >= KICK_GAP and t < self.music_end:
+                self.kick_t.append(t); self.kick_s.append(float(v)); last = t
+        self.kick_t, self.kick_s = np.array(self.kick_t), np.array(self.kick_s)
+
+        # travel: integral of the tunnel speed, so speed follows rms and position never jumps
+        n = int(0.25 * self.ffps)
+        sm = np.convolve(np.pad(self.rms, (n // 2, n - n // 2 - 1), mode="edge"), np.ones(n) / n, "valid")
+        self.travel = np.r_[0, np.cumsum(TRAVEL[0] + TRAVEL[1] * sm)[:-1]] / self.ffps
+
     def at(self, arr, t):
         """arr (at the features' frame rate) at time t, linearly interpolated."""
         x = min(len(arr) - 1.0, max(0.0, t * self.ffps))
@@ -75,8 +93,15 @@ class Sync:
         nxt = b[i + 1] if i + 1 < len(b) else b[i] + 60 / self.tempo
         return i + (t - b[i]) / (nxt - b[i]), float(t - b[i])
 
+    def section_onsets(self, s):
+        """This section's onset times relative to its start (at most MAX_ONS)."""
+        m = (self.onset_t >= s["start"]) & (self.onset_t < s["end"])
+        return (self.onset_t[m] - s["start"])[:MAX_ONS].astype("f4")
+
     def uniforms(self, t):
         s = self.section(t)
+        ons = self.section_onsets(s)
+        ki = np.searchsorted(self.kick_t, t, side="right") - 1
         beat, since_beat = self.beat(t)
         so = self.since(self.onset_t, t)
         i = np.searchsorted(self.onset_t, t, side="right") - 1
@@ -89,7 +114,10 @@ class Sync:
                 "flash": strength * float(np.exp(-so / 0.18)),
                 "bone": float(np.exp(-self.since(self.bone_t, t) / 0.10)),
                 "wob": float(np.clip(self.at(self.wobble_cents, t) / WOBBLE_FULL, -1, 1)),
-                "beat": beat, "since_beat": since_beat}
+                "beat": beat, "since_beat": since_beat,
+                "kick": 0.0 if ki < 0 else self.kick_s[ki] * float(np.exp(-(t - self.kick_t[ki]) / 0.12)),
+                "travel": self.at(self.travel, t), "ons": ons, "n_ons": len(ons),
+                "scroller": 0.0 if s["name"] in NO_SCROLLER else 1.0}
 
 if __name__ == "__main__":
     s = Sync()
@@ -99,4 +127,11 @@ if __name__ == "__main__":
         n = int(((s.bone_t >= x["start"]) & (s.bone_t < x["end"])).sum())
         print(f"  {x['name']:13s} bone flashes {n}")
     g = np.diff(s.bone_t)
-    print(f"min gap {g.min():.2f} s ({1 / g.min():.2f}/s max)")
+    print(f"bone min gap {g.min():.2f} s ({1 / g.min():.2f}/s max)")
+    g = np.diff(s.kick_t)
+    print(f"kick flashes {len(s.kick_t)} of {len(s.onset_t)} onsets; min gap {g.min():.2f} s "
+          f"({1 / g.min():.2f}/s max)")
+    v1 = next(x for x in s.sections if x["name"] == "verse1")
+    a, b = s.at(s.travel, v1["start"]), s.at(s.travel, v1["end"])
+    print(f"verse1 travel {b - a:.1f} depth units over {v1['end'] - v1['start']:.1f} s "
+          f"({(b - a) / (v1['end'] - v1['start']):.2f}/s mean)")
