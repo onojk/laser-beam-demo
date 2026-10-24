@@ -25,9 +25,15 @@ python3 -m venv .venv
 ## Run
 
 ```sh
-# 1. analyse the song -> cache/features.json, prints tempo and section timestamps
+# 1. analyse the song -> cache/features.json (tempo, beat grid, onsets, rms, low/mid/high
+#    bands, tape-wobble estimate, novelty curve)
 .venv/bin/python analyze.py "/path/to/Laser Beam.wav"
+
+# 2. section map -> cache/sections.json, prints the timestamps
+.venv/bin/python sections.py
 ```
+
+Analysis uses ffmpeg and numpy only and takes about a second.
 
 ## License
 
