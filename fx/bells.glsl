@@ -76,8 +76,8 @@ void main() {
         float rim = exp(-d * d / 0.0015) * fadeb;
         float inside = (1.0 - smoothstep(-0.02, 0.02, d)) * fadeb;
         float hollow = 1.0 - smoothstep(-0.01, 0.02, eyes);
-        e.g += (rim * 0.10 + inside * 0.025 * (1.0 - hollow)) * breathe;
-        e.r += rim * 0.03 * breathe;
+        e.g += (rim * 0.125 + inside * 0.031 * (1.0 - hollow)) * breathe;
+        e.r += rim * 0.0375 * breathe;
         frag = vec4(e, 1.0);
         return;
     }
@@ -101,12 +101,12 @@ void main() {
         float a = fk / float(n_cards) * 6.2831853 + rot;
         float z = cos(a);                                     // +1 front, -1 back
         float sc = 0.78 + 0.30 * z;
-        vec2 c = vec2(1.18 * sin(a), -0.22 - 0.16 * z + 0.035 * sin(ts * 0.6 + fk * 1.3));
+        vec2 c = vec2(1.18 * sin(a), -0.10 - 0.16 * z + 0.035 * sin(ts * 0.6 + fk * 1.3));
         // a page turned edge-on as it swings round the side
         float wid = CARD_W * sc * mix(0.15, 1.0, abs(z));
         vec2 l = (p - c) / vec2(wid, CARD_H * sc);
         if (abs(l.x) > 1.08 || abs(l.y) > 1.6) continue;
-        float bright = mix(0.12, 1.0, smoothstep(-0.6, 0.9, z));
+        float bright = mix(0.22, 1.0, smoothstep(-0.6, 0.9, z));
         float frame = max(abs(l.x) - 1.0, abs(l.y) - 1.0);
         e.g += glow(frame * CARD_H * sc, 0.0025) * 0.30 * bright;
         e.g += step(frame, 0.0) * 0.025 * bright;
