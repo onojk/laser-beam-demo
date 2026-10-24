@@ -1,0 +1,9 @@
+frames/
+renders/
+cache/
+*.wav
+*.mp4
+*.png
+__pycache__/
+*.pyc
+.venv/
